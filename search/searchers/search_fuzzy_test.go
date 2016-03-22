@@ -12,6 +12,7 @@ package searchers
 import (
 	"testing"
 
+	"github.com/blevesearch/bleve/index/upside_down"
 	"github.com/blevesearch/bleve/search"
 )
 
@@ -126,5 +127,57 @@ func TestFuzzySearch(t *testing.T) {
 		if len(test.results) != i {
 			t.Errorf("expected %d results got %d for test %d", len(test.results), i, testIndex)
 		}
+	}
+}
+
+func BenchmarkFuzzySearch(b *testing.B) {
+	dictDocReader, err := dictDocIndex.Reader()
+	if err != nil {
+		b.Error(err)
+	}
+
+	defer func() {
+		err := dictDocReader.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}()
+
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		NewFuzzySearcher(dictDocReader, "douces", 0, 2, "desc", 1.0, true)
+	}
+}
+
+func BenchmarkFuzzySearchMafsa(b *testing.B) {
+	if dictDocIndex == nil {
+		b.Fatal("Dictionary index is not ready.\n")
+	}
+
+	dictDocReader, err := dictDocIndex.Reader()
+	if err != nil {
+		b.Error(err)
+	}
+
+	defer func() {
+		err := dictDocReader.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}()
+
+	r, ok := dictDocReader.(*upside_down.IndexReader)
+	if !ok {
+		return
+	}
+
+	_, err = r.BuildMinTree("desc")
+	if err != nil {
+		b.Error(err)
+	}
+
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		NewFuzzySearcherMafsa(dictDocReader, "douces", 0, 2, "desc", 1.0, true)
 	}
 }
