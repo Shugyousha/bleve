@@ -13,12 +13,14 @@ import (
 	"github.com/blevesearch/bleve/document"
 	"github.com/blevesearch/bleve/index"
 	"github.com/blevesearch/bleve/index/store"
+	lv "github.com/dvirsky/levenshtein"
 )
 
 type IndexReader struct {
-	index    *UpsideDownCouch
-	kvreader store.KVReader
-	docCount uint64
+	index          *UpsideDownCouch
+	kvreader       store.KVReader
+	docCount       uint64
+	mafsabuildchan chan struct{}
 }
 
 func (i *IndexReader) TermFieldReader(term []byte, fieldName string) (index.TermFieldReader, error) {
@@ -31,6 +33,56 @@ func (i *IndexReader) TermFieldReader(term []byte, fieldName string) (index.Term
 
 func (i *IndexReader) FieldDict(fieldName string) (index.FieldDict, error) {
 	return i.FieldDictRange(fieldName, nil, nil)
+}
+
+func (i *IndexReader) GetMafsa(fieldname string) (*lv.MinTree, error) {
+	mt := i.index.fieldCache.GetMafsa(fieldname)
+	if mt != nil {
+		return mt, nil
+	}
+
+	mt, err := i.BuildMinTree(fieldname)
+	if err != nil {
+		return nil, err
+	}
+	return mt, nil
+}
+
+func (i *IndexReader) BuildMinTree(fieldname string) (*lv.MinTree, error) {
+	if i.mafsabuildchan == nil {
+		i.mafsabuildchan = make(chan struct{}, 0)
+	} else {
+		<-i.mafsabuildchan
+	}
+	i.mafsabuildchan = make(chan struct{}, 0)
+
+	var dictterms []string
+	fd, err := i.FieldDictRange(fieldname, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer fd.Close()
+
+	tfd, err := fd.Next()
+	for err == nil && tfd != nil {
+		dictterms = append(dictterms, tfd.Term)
+		tfd, err = fd.Next()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// We need a sorted list of terms and the FieldDict should give
+	// them to us sorted already. No need to sort them again here.
+	mt, err := lv.NewMinTree(dictterms)
+	if err != nil {
+		return nil, err
+	}
+
+	i.index.fieldCache.SetMafsa(fieldname, mt)
+	close(i.mafsabuildchan)
+	return mt, nil
 }
 
 func (i *IndexReader) FieldDictRange(fieldName string, startTerm []byte, endTerm []byte) (index.FieldDict, error) {

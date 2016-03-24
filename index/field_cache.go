@@ -11,17 +11,21 @@ package index
 
 import (
 	"sync"
+
+	lv "github.com/dvirsky/levenshtein"
 )
 
 type FieldCache struct {
 	fieldIndexes   map[string]uint16
 	lastFieldIndex int
+	mintrees       map[string]*lv.MinTree
 	mutex          sync.RWMutex
 }
 
 func NewFieldCache() *FieldCache {
 	return &FieldCache{
 		fieldIndexes:   make(map[string]uint16),
+		mintrees:       make(map[string]*lv.MinTree),
 		lastFieldIndex: -1,
 	}
 }
@@ -33,6 +37,14 @@ func (f *FieldCache) AddExisting(field string, index uint16) {
 	if int(index) > f.lastFieldIndex {
 		f.lastFieldIndex = int(index)
 	}
+}
+
+func (f *FieldCache) SetMafsa(fieldname string, mt *lv.MinTree) {
+	f.mintrees[fieldname] = mt
+}
+
+func (f *FieldCache) GetMafsa(fieldname string) *lv.MinTree {
+	return f.mintrees[fieldname]
 }
 
 // FieldNamed returns the index of the field, and whether or not it existed

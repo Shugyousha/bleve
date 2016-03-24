@@ -10,7 +10,10 @@
 package searchers
 
 import (
+	"fmt"
+
 	"github.com/blevesearch/bleve/index"
+	"github.com/blevesearch/bleve/index/upside_down"
 	"github.com/blevesearch/bleve/search"
 )
 
@@ -87,6 +90,49 @@ func NewFuzzySearcher(indexReader index.IndexReader, term string, prefix, fuzzin
 		searcher:    searcher,
 	}, nil
 }
+
+func NewFuzzySearcherMafsa(indexReader index.IndexReader, term string, prefix, fuzziness int, field string, boost float64, explain bool) (*FuzzySearcher, error) {
+	udr, ok := indexReader.(*upside_down.IndexReader)
+	if !ok {
+		return nil, fmt.Errorf("Only the upside_down index works with the Mafsa fuzzy searcher.")
+	}
+
+	mfs, err := udr.GetMafsa(field)
+	if err != nil {
+		return nil, err
+	}
+
+	// get all terms with a low enough levenshtein distance
+	candidateTerms := mfs.FuzzyMatches(term, fuzziness)
+
+	// enumerate all the terms in the range
+	qsearchers := make([]search.Searcher, 0, 25)
+
+	for _, cterm := range candidateTerms {
+		qsearcher, err := NewTermSearcher(indexReader, cterm, field, boost, explain)
+		if err != nil {
+			return nil, err
+		}
+		qsearchers = append(qsearchers, qsearcher)
+	}
+
+	// build disjunction searcher of these ranges
+	searcher, err := NewDisjunctionSearcher(indexReader, qsearchers, 0, explain)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FuzzySearcher{
+		indexReader: indexReader,
+		term:        term,
+		prefix:      prefix,
+		fuzziness:   fuzziness,
+		field:       field,
+		explain:     explain,
+		searcher:    searcher,
+	}, nil
+}
+
 func (s *FuzzySearcher) Count() uint64 {
 	return s.searcher.Count()
 }

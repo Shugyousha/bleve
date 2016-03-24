@@ -59,7 +59,6 @@ func (r *UpsideDownCouchFieldDict) Next() (*index.DictEntry, error) {
 	// advance the iterator to the next term
 	r.iterator.Next()
 	return &rv, nil
-
 }
 
 func (r *UpsideDownCouchFieldDict) Close() error {
