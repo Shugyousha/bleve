@@ -88,6 +88,43 @@ func (s *PhraseSearcher) SetQueryNorm(qnorm float64) {
 	s.mustSearcher.SetQueryNorm(qnorm)
 }
 
+func checkTermLocationsRecursively(tlm search.TermLocationMap, priorLocation *search.Location, terms []string, termidx int, rvtlm search.TermLocationMap) search.TermLocationMap {
+	if len(rvtlm) == len(terms) {
+		return rvtlm
+	}
+
+	nextlocs, ok := tlm[terms[termidx]]
+	if !ok {
+		return nil
+	}
+
+	// we have to copy the original map here because we may have to
+	// reuse it.
+	origrv := make(search.TermLocationMap, len(rvtlm))
+	for k, v := range rvtlm {
+		origrv[k] = v
+	}
+	for _, nextLocation := range nextlocs {
+		if nextLocation.Pos == priorLocation.Pos+float64(1) && nextLocation.SameArrayElement(priorLocation) {
+			// found a location match for this
+			// term. First we add the prior match,
+			// then the current one.
+			rvtlm.AddLocation(terms[termidx-1], priorLocation)
+			rvtlm.AddLocation(terms[termidx], nextLocation)
+			ret := checkTermLocationsRecursively(tlm, nextLocation, terms, termidx+1, rvtlm)
+			if ret != nil {
+				return rvtlm
+			}
+			// the following terms did not match but
+			// we added the locations up to this point
+			// already. We have to undo that by re-assigning
+			// the original map.
+			rvtlm = origrv
+		}
+	}
+	return nil
+}
+
 func (s *PhraseSearcher) Next(ctx *search.SearchContext) (*search.DocumentMatch, error) {
 	if !s.initialized {
 		err := s.initSearchers(ctx)
@@ -99,49 +136,24 @@ func (s *PhraseSearcher) Next(ctx *search.SearchContext) (*search.DocumentMatch,
 	var rv *search.DocumentMatch
 	for s.currMust != nil {
 		rvftlm := make(search.FieldTermLocationMap, 0)
-		freq := 0
-		firstTerm := s.terms[0]
+
 		for field, termLocMap := range s.currMust.Locations {
-			locations, ok := termLocMap[firstTerm]
+			curlocs, ok := termLocMap[s.terms[0]]
 			if !ok {
 				continue
 			}
 
-			rvtlm := make(search.TermLocationMap, 0)
-
-		OUTER:
-			for _, location := range locations {
-				crvtlm := make(search.TermLocationMap, 0)
-			INNER:
-				for i := 1; i < len(s.terms); i++ {
-					nextTerm := s.terms[i]
-					if nextTerm == "" {
-						continue
-					}
-					// look through all these term locations
-					// to try and find the correct offsets
-					nextLocations, ok := termLocMap[nextTerm]
-					if !ok {
-						continue OUTER
-					}
-					for _, nextLocation := range nextLocations {
-						if nextLocation.Pos == location.Pos+float64(i) && nextLocation.SameArrayElement(location) {
-							// found a location match for this term
-							crvtlm.AddLocation(nextTerm, nextLocation)
-							continue INNER
-						}
-					}
-					// if we got here we didn't find a location match for this term
-					continue OUTER
+			for _, curloc := range curlocs {
+				rvtlm := make(search.TermLocationMap)
+				rvtlm = checkTermLocationsRecursively(termLocMap, curloc, s.terms, 1, rvtlm)
+				if rvtlm == nil {
+					continue
 				}
-				// if we got here all the terms matched
-				freq++
-				search.MergeTermLocationMaps(rvtlm, crvtlm)
 				rvftlm[field] = rvtlm
 			}
 		}
 
-		if freq > 0 {
+		if len(rvftlm) > 0 {
 			// return match
 			rv = s.currMust
 			rv.Locations = rvftlm
