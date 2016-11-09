@@ -88,41 +88,30 @@ func (s *PhraseSearcher) SetQueryNorm(qnorm float64) {
 	s.mustSearcher.SetQueryNorm(qnorm)
 }
 
-func checkTermLocationsRecursively(tlm search.TermLocationMap, priorLocation *search.Location, terms []string, termidx int, rvtlm search.TermLocationMap) search.TermLocationMap {
-	if len(rvtlm) == len(terms) {
-		return rvtlm
+func checkTermLocationsRecursively(tlm search.TermLocationMap, priorLocation *search.Location, terms []string, termidx int, rvtlm search.TermLocationMap) (bool, search.TermLocationMap) {
+	if len(terms) == termidx {
+		// we found all terms
+		return true, rvtlm
 	}
 
 	nextlocs, ok := tlm[terms[termidx]]
 	if !ok {
-		return nil
+		return false, nil
 	}
 
-	// we have to copy the original map here because we may have to
-	// reuse it.
-	origrv := make(search.TermLocationMap, len(rvtlm))
-	for k, v := range rvtlm {
-		origrv[k] = v
-	}
 	for _, nextLocation := range nextlocs {
 		if nextLocation.Pos == priorLocation.Pos+float64(1) && nextLocation.SameArrayElement(priorLocation) {
 			// found a location match for this
-			// term. First we add the prior match,
-			// then the current one.
-			rvtlm.AddLocation(terms[termidx-1], priorLocation)
-			rvtlm.AddLocation(terms[termidx], nextLocation)
-			ret := checkTermLocationsRecursively(tlm, nextLocation, terms, termidx+1, rvtlm)
-			if ret != nil {
-				return rvtlm
+			// term. Now we check the other ones.
+			foundall, nrvtlm := checkTermLocationsRecursively(tlm, nextLocation, terms, termidx+1, rvtlm)
+			if foundall {
+				nrvtlm.AddLocation(terms[termidx-1], priorLocation)
+				nrvtlm.AddLocation(terms[termidx], nextLocation)
+				return true, nrvtlm
 			}
-			// the following terms did not match but
-			// we added the locations up to this point
-			// already. We have to undo that by re-assigning
-			// the original map.
-			rvtlm = origrv
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (s *PhraseSearcher) Next(ctx *search.SearchContext) (*search.DocumentMatch, error) {
@@ -145,8 +134,8 @@ func (s *PhraseSearcher) Next(ctx *search.SearchContext) (*search.DocumentMatch,
 
 			for _, curloc := range curlocs {
 				rvtlm := make(search.TermLocationMap)
-				rvtlm = checkTermLocationsRecursively(termLocMap, curloc, s.terms, 1, rvtlm)
-				if rvtlm == nil {
+				foundall, rvtlm := checkTermLocationsRecursively(termLocMap, curloc, s.terms, 1, rvtlm)
+				if !foundall {
 					continue
 				}
 				rvftlm[field] = rvtlm
